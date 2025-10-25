@@ -1,4 +1,4 @@
-
+// ---------- Imports ----------
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
@@ -8,157 +8,121 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
 const { body, validationResult } = require("express-validator");
-const mongoSanitize = require("express-mongo-sanitize");
 
+// ---------- Initialize ----------
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ---------- Basic env check ----------
-const requiredEnvs = ["MONGO_URI", "EMAIL_USER", "EMAIL_PASS", "EMAIL_FROM", "JWT_SECRET", "ALLOWED_ORIGIN"];
-for (const key of requiredEnvs) {
-  if (!process.env[key]) {
-    console.error(`Missing required env var: ${key}. Check your .env file.`);
-    process.exit(1);
-  }
-}
-  
 // ---------- Middlewares ----------
 app.use(helmet());
 app.use(express.json());
-// app.use(mongoSanitize());
- // prevent NoSQL injection
+app.use(
+  cors({
+    origin: process.env.ALLOWED_ORIGIN
+      ? process.env.ALLOWED_ORIGIN.split(",").map((s) => s.trim())
+      : "*", // fallback for dev
+    credentials: true,
+  })
+);
 
-// CORS - allow only configured origin
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN.split(",").map(s => s.trim()),
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true,
-}));
-
-// Rate limiter (basic)
+// ---------- Rate Limiting ----------
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10),
-  max: parseInt(process.env.RATE_LIMIT_MAX || "60", 10),
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // max requests per minute
   message: { message: "Too many requests, please try again later." },
 });
 app.use(limiter);
 
-// ---------- DB ----------
-mongoose.connect(process.env.MONGO_URI, { })
-  .then(() => console.log("✅ MongoDB connected successfully"))
+// ---------- MongoDB Connection ----------
+mongoose
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("✅ MongoDB connected"))
   .catch((err) => {
-    console.error("❌ MongoDB connection error:", err.message || err);
+    console.error("❌ MongoDB connection error:", err);
     process.exit(1);
   });
 
 // ---------- Schemas ----------
 const userSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true },
-  mail: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  otp: { type: String },
-  otpExpires: { type: Date },
-}, { timestamps: true });
+  name: String,
+  mail: { type: String, unique: true },
+  otp: String,
+  otpExpires: Date,
+});
 
-const applianceSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
-  applianceName: { type: String, required: true, trim: true },
-  rating: { type: Number, required: true },
-  hourlyUsage: { type: Number, required: true },
-  quantity: { type: Number, required: true },
-  dayFrequency: { type: Number, required: true },
-  consumptionPerDay: { type: Number, required: true },
-  consumptionPerWeek: { type: Number, required: true },
-  consumptionPerMonth: { type: Number, required: true },
-  monthlyCost: { type: Number, required: true },
-  possibleSavings: { type: Number, default: 0 },
-}, { timestamps: true });
+const applianceSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    applianceName: { type: String, required: true },
+    rating: { type: Number, required: true }, // kW
+    hourlyUsage: { type: Number, required: true },
+    quantity: { type: Number, required: true },
+    dayFrequency: { type: Number, required: true },
+    unitRate: { type: Number, required: true }, // ₹ per kWh
+    consumptionPerDay: Number,
+    consumptionPerWeek: Number,
+    consumptionPerMonth: Number,
+    monthlyCost: Number,
+  },
+  { timestamps: true }
+);
 
 const User = mongoose.model("User", userSchema);
 const Appliance = mongoose.model("Appliance", applianceSchema);
 
-// ---------- Mailer ----------
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// ---------- Helper: Send OTP Email ----------
+async function sendOtpEmail(mail, name, otp) {
+  const transporter = nodemailer.createTransport({
+    service: "gmail", // use your email service
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
 
-async function sendOtpEmail(toEmail, name, otp) {
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
-    to: toEmail,
-    subject: "🔒 Your OTP for Energy Savings Calculator",
+    from: `"Energy Calculator" <${process.env.EMAIL_USER}>`,
+    to: mail,
+    subject: "Your OTP Code for Energy Calculator",
     html: `
-      <div style="font-family: 'Arial', sans-serif; background-color: #f4f6f8; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
-          
-          <!-- Header -->
-          <div style="background: #007bff; color: #ffffff; text-align: center; padding: 18px 16px; font-size: 20px; font-weight: bold;">
-            ⚡ Energy Savings Calculator
-          </div>
-          
-          <!-- Body -->
-          <div style="padding: 28px; color: #333333; line-height: 1.6;">
-            <p style="margin: 0 0 12px;">Hello <strong>${name}</strong>,</p>
-            <p style="margin: 0 0 20px;">Your one-time password (OTP) is:</p>
-            
-            <!-- OTP Box -->
-            <div style="background: #f1f5ff; border-radius: 8px; padding: 18px; text-align: center; font-size: 30px; font-weight: bold; letter-spacing: 6px; color: #007bff; margin: 24px 0;">
-              ${otp}
-            </div>
-            
-            <p style="margin: 0 0 12px;">This OTP will expire in <strong>10 minutes</strong>.</p>
-            <p style="margin: 0;">If you did not request this, please ignore this email.</p>
-            
-            <hr style="border: none; border-top: 1px solid #ddd; margin: 32px 0 20px;" />
-            
-            <!-- Footer -->
-            <div style="text-align: center;">
-              <a href="https://www.antariot.com" style="color: #007bff; text-decoration: none; font-weight: 500;">
-                www.antariot.com
-              </a>
-              <br />
-              <a href="mailto:sales@antariot.com" style="color: #007bff; text-decoration: none; font-weight: 500;">
-                sales@antariot.com
-              </a>
-              <p style="font-size: 13px; color: #777; margin-top: 14px;">
-                © ${new Date().getFullYear()} Antar IoT Energy Savings Calculator. All rights reserved.
-              </p>
-            </div>
-          </div>
-        </div>
+      <div style="font-family: Arial, sans-serif; background:#f6f9fc; padding:20px; text-align:center;">
+        <h2 style="color:#333;">Hello ${name},</h2>
+        <p style="font-size:16px;">Your One-Time Password (OTP) is:</p>
+        <h1 style="background:#4CAF50; color:#fff; display:inline-block; padding:10px 20px; border-radius:5px;">${otp}</h1>
+        <p style="font-size:14px; color:#555;">This OTP is valid for 10 minutes.</p>
       </div>
-`,
+    `,
   };
-  return transporter.sendMail(mailOptions);
+
+  await transporter.sendMail(mailOptions);
 }
 
-// ---------- Helpers ----------
+// ---------- JWT Helpers ----------
 function signToken(payload) {
-  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "7d" });
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 }
 
 function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization || "";
-  if (!authHeader.startsWith("Bearer ")) return res.status(401).json({ message: "Unauthorized" });
-  const token = authHeader.split(" ")[1];
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
+
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload; // { userId, mail }
-    return next();
-  } catch (err) {
-    return res.status(401).json({ message: "Invalid or expired token" });
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ message: "Invalid token" });
   }
 }
 
 // ---------- Routes ----------
 
-// health
-app.get("/", (req, res) => res.send("Energy Savings Calculator API is running"));
+// Health Check
+app.get("/", (req, res) => res.send("⚡ Energy Calculator API is running!"));
 
-// send OTP - validate inputs
+// ---------- Send OTP ----------
 app.post(
   "/api/send-otp",
   [
@@ -167,11 +131,12 @@ app.post(
   ],
   async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ message: errors.array()[0].msg });
+    if (!errors.isEmpty())
+      return res.status(400).json({ message: errors.array()[0].msg });
 
     const { mail, name } = req.body;
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
     try {
       await User.findOneAndUpdate(
@@ -189,7 +154,7 @@ app.post(
   }
 );
 
-// verify OTP -> respond with jwt
+// ---------- Verify OTP ----------
 app.post(
   "/api/verify-otp",
   [
@@ -198,24 +163,31 @@ app.post(
   ],
   async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ message: errors.array()[0].msg });
+    if (!errors.isEmpty())
+      return res.status(400).json({ message: errors.array()[0].msg });
 
     const { mail, otp } = req.body;
     try {
       const user = await User.findOne({ mail });
       if (!user) return res.status(404).json({ message: "User not found" });
+
       if (!user.otp || user.otp !== otp || new Date() > user.otpExpires) {
         return res.status(400).json({ message: "Invalid or expired OTP" });
       }
 
-      // clear otp
+      // clear OTP
       user.otp = undefined;
       user.otpExpires = undefined;
       await user.save();
 
       // sign token
       const token = signToken({ userId: user._id, mail: user.mail });
-      return res.status(200).json({ token, userId: user._id, name: user.name, mail: user.mail });
+      return res.status(200).json({
+        token,
+        userId: user._id,
+        name: user.name,
+        mail: user.mail,
+      });
     } catch (err) {
       console.error("Error in /api/verify-otp:", err);
       return res.status(500).json({ message: "Internal server error" });
@@ -223,7 +195,7 @@ app.post(
   }
 );
 
-// Create appliance - authenticated
+// ---------- Create Appliance ----------
 app.post(
   "/api/appliances",
   authMiddleware,
@@ -233,102 +205,108 @@ app.post(
     body("hourlyUsage").isNumeric(),
     body("quantity").isInt({ min: 1 }),
     body("dayFrequency").isInt({ min: 0 }),
+    body("unitRate").isNumeric(),
   ],
   async (req, res) => {
-    const errs = validationResult(req);
-    if (!errs.isEmpty()) return res.status(400).json({ message: errs.array()[0].msg });
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return res.status(400).json({ message: errors.array()[0].msg });
 
     try {
-      // compute derived fields to avoid trusting client
-      const { applianceName, rating, hourlyUsage, quantity, dayFrequency } = req.body;
-      const consumptionPerDay = (rating * hourlyUsage * quantity) / 1000;
+      const { applianceName, rating, hourlyUsage, quantity, dayFrequency, unitRate } =
+        req.body;
+
+      // Energy calculations
+      const consumptionPerDay = rating * hourlyUsage * quantity;
       const consumptionPerWeek = consumptionPerDay * dayFrequency;
       const consumptionPerMonth = consumptionPerWeek * 4.33;
-      const monthlyCost = consumptionPerMonth * 0.12; // move rate to env if needed
+      const monthlyCost = consumptionPerMonth * unitRate;
 
-      const doc = new Appliance({
+      const appliance = new Appliance({
         userId: req.user.userId,
         applianceName,
         rating,
         hourlyUsage,
         quantity,
         dayFrequency,
+        unitRate,
         consumptionPerDay,
         consumptionPerWeek,
         consumptionPerMonth,
         monthlyCost,
       });
-      await doc.save();
-      return res.status(201).json(doc);
+
+      await appliance.save();
+      res.status(201).json(appliance);
     } catch (err) {
-      console.error("Error adding appliance:", err);
-      return res.status(500).json({ message: "Internal server error" });
+      console.error("Error creating appliance:", err);
+      res.status(500).json({ message: "Internal server error" });
     }
   }
 );
 
-// Get appliances for logged in user
+// ---------- Get Appliances ----------
 app.get("/api/appliances", authMiddleware, async (req, res) => {
   try {
-    const appliances = await Appliance.find({ userId: req.user.userId }).sort({ createdAt: -1 });
-    return res.status(200).json(appliances);
+    const appliances = await Appliance.find({ userId: req.user.userId }).sort({
+      createdAt: -1,
+    });
+    res.json(appliances);
   } catch (err) {
-    console.error("Error fetching appliances:", err);
-    return res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({ message: "Internal server error" });
   }
 });
 
-// Update appliance - ownership enforced
-app.put(
-  "/api/appliances/:id",
-  authMiddleware,
-  [
-    body("applianceName").optional().isLength({ min: 1 }),
-    body("rating").optional().isNumeric(),
-    body("hourlyUsage").optional().isNumeric(),
-    body("quantity").optional().isInt({ min: 1 }),
-    body("dayFrequency").optional().isInt({ min: 0 }),
-  ],
-  async (req, res) => {
-    try {
-      const appliance = await Appliance.findById(req.params.id);
-      if (!appliance) return res.status(404).json({ message: "Appliance not found" });
-      if (appliance.userId.toString() !== req.user.userId) return res.status(403).json({ message: "Forbidden" });
+// ---------- Update Appliance ----------
+app.put("/api/appliances/:id", authMiddleware, async (req, res) => {
+  try {
+    const appliance = await Appliance.findById(req.params.id);
+    if (!appliance) return res.status(404).json({ message: "Appliance not found" });
 
-      // merge updates and recalc derived fields if needed
-      const updates = req.body;
-      const merged = { ...appliance.toObject(), ...updates };
-      const consumptionPerDay = (merged.rating * merged.hourlyUsage * merged.quantity) / 1000;
-      const consumptionPerWeek = consumptionPerDay * merged.dayFrequency;
-      const consumptionPerMonth = consumptionPerWeek * 4.33;
-      const monthlyCost = consumptionPerMonth * 0.12;
+    if (!appliance.userId.equals(req.user.userId))
+      return res.status(403).json({ message: "Forbidden" });
 
-      Object.assign(appliance, updates, { consumptionPerDay, consumptionPerWeek, consumptionPerMonth, monthlyCost });
-      await appliance.save();
-      return res.status(200).json(appliance);
-    } catch (err) {
-      console.error("Error updating appliance:", err);
-      return res.status(500).json({ message: "Internal server error" });
-    }
+    const updates = req.body;
+    const merged = { ...appliance.toObject(), ...updates };
+
+    // Recalculate
+    const consumptionPerDay = merged.rating * merged.hourlyUsage * merged.quantity;
+    const consumptionPerWeek = consumptionPerDay * merged.dayFrequency;
+    const consumptionPerMonth = consumptionPerWeek * 4.33;
+    const monthlyCost = consumptionPerMonth * merged.unitRate;
+
+    Object.assign(appliance, updates, {
+      consumptionPerDay,
+      consumptionPerWeek,
+      consumptionPerMonth,
+      monthlyCost,
+    });
+
+    await appliance.save();
+    res.json(appliance);
+  } catch (err) {
+    console.error("Error updating appliance:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
-);
+});
 
-// Delete appliance - ownership enforced
+// ---------- Delete Appliance ----------
 app.delete("/api/appliances/:id", authMiddleware, async (req, res) => {
   try {
     const appliance = await Appliance.findById(req.params.id);
     if (!appliance) return res.status(404).json({ message: "Appliance not found" });
-    if (appliance.userId.toString() !== req.user.userId) return res.status(403).json({ message: "Forbidden" });
+
+    if (!appliance.userId.equals(req.user.userId))
+      return res.status(403).json({ message: "Forbidden" });
 
     await Appliance.findByIdAndDelete(req.params.id);
-    return res.status(200).json({ message: "Appliance deleted successfully" });
+    res.json({ message: "Appliance deleted successfully" });
   } catch (err) {
     console.error("Error deleting appliance:", err);
-    return res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({ message: "Internal server error" });
   }
 });
 
-// ---------- Start ----------
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-});
+// ---------- Start Server ----------
+app.listen(port, () => console.log(`🚀 Server running at http://localhost:${port}`));
+
