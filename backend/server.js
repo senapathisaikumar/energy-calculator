@@ -88,12 +88,7 @@ async function sendOtpEmail(mail, name, otp) {
     to: mail,
     subject: "Your OTP Code for Energy Calculator",
     html: `
-      <div style="font-family: Arial, sans-serif; background:#f6f9fc; padding:20px; text-align:center;">
-        <h2 style="color:#333;">Hello ${name},</h2>
-        <p style="font-size:16px;">Your One-Time Password (OTP) is:</p>
-        <h1 style="background:#4CAF50; color:#fff; display:inline-block; padding:10px 20px; border-radius:5px;">${otp}</h1>
-        <p style="font-size:14px; color:#555;">This OTP is valid for 10 minutes.</p>
-      </div>
+      <div style="font-family: 'Arial', sans-serif; background-color: #f4f6f8; padding: 20px;"> <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);"> <!-- Header --> <div style="background: #007bff; color: #ffffff; text-align: center; padding: 18px 16px; font-size: 20px; font-weight: bold;"> ⚡︎ Energy Savings Calculator </div> <!-- Body --> <div style="padding: 28px; color: #333333; line-height: 1.6;"> <p style="margin: 0 0 12px;">Hello <strong>${name}</strong>,</p> <p style="margin: 0 0 20px;">Your one-time password (OTP) is:</p> <!-- OTP Box --> <div style="background: #f1f5ff; border-radius: 8px; padding: 18px; text-align: center; font-size: 30px; font-weight: bold; letter-spacing: 6px; color: #007bff; margin: 24px 0;"> ${otp} </div> <p style="margin: 0 0 12px;">This OTP will expire in <strong>10 minutes</strong>.</p> <p style="margin: 0;">If you did not request this, please ignore this email.</p> <hr style="border: none; border-top: 1px solid #ddd; margin: 32px 0 20px;" /> <!-- Footer --> <div style="text-align: center;"> <a href="https://www.antariot.com" style="color: #007bff; text-decoration: none; font-weight: 500;"> www.antariot.com </a> <br /> <a href="mailto:sales@antariot.com" style="color: #007bff; text-decoration: none; font-weight: 500;"> sales@antariot.com </a> <p style="font-size: 13px; color: #777; margin-top: 14px;"> © ${new Date().getFullYear()} <span style="font-weight: bold;">Antar IoT Energy Savings Calculator</span>. All rights reserved. </p> </div> </div> </div> </div>
     `,
   };
 
